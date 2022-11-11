@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Blokus</title>
+</head>
+<body style="background-color:#000000;">
+  <p align="center" id="p"></p>
+  <style>
+    img {visibility:hidden;}
+    body, html {overflow:hidden;width:100%;height:100%;margin:0px; padding:0px;}
+    canvas, p {margin:0px;padding:0px;}
+  </style>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="pixi.js"></script>
+  <script>
+var touchScreen = (('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || (navigator.msMaxTouchPoints > 0));
+var aspectRatio = touchScreen ? (16 / 9) : (9 / 16);
+var app = new PIXI.Application({width:touchScreen ? 720 : 1280, height: touchScreen ? 1280 : 720, antialias:true});
+var canvas;
+var w = touchScreen ? 720 : 1280;
+var h = touchScreen ? 1280 : 720;
+var socket = io();
+var triggers = [];
+var scene = {name:""};
+var blokusColors = [0xf8b11a, 0x589841, 0xb42117, 0x382b70];
+var container = new PIXI.Container();
+run();
+
+function frame(){
+  if(aspectRatio < (window.innerHeight / window.innerWidth)){
+    if(!touchScreen){
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerWidth * (16 / 9) + "px";
+    }else{
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerWidth * (9 / 16) + "px";
+    }
+  }else{
+    if(touchScreen){
+      canvas.style.width = window.innerHeight * (9 / 16) + "px";
+      canvas.style.height = window.innerHeight + "px";
+    }else{
+      canvas.style.width = window.innerHeight * (16 / 9) + "px";
+      canvas.style.height = window.innerHeight + "px";
+    }
+  }
+}
+function changeScene(newScene){
+  container.removeChildren();
+  if(touchScreen){
+    if(newScene == "Title Screen"){
+      scene = {
+        name:"Title Screen",
+        input:""
+      }
+      var path = new PIXI.Graphics();
+      for(var i = 0; i < 4; i++){
+        path.beginFill(blokusColors[i]);
+        path.drawRect(w * (i % 2) / 2, h * Math.floor(i / 2) / 2, w / 2, h / 2);
+      }
+      container.addChild(path);
+      /*var inputBox = drawOblong(w * 0.3, h * 0.45, w * 0.4, h * 0.1, h * 0.05, 0xffffff, 0x000000, h * 0.01);
+      var input = new PIXI.Text("", {fill:0x000000, fontFamily:"Courier New", fontSize:w * 0.038});
+      input.anchor.set(0.5, 0.5);
+      input.position.set(w / 2, h / 2);
+      container.addChild(input);
+      scene.input = input;*/
+    }
+  }else{
+    if(newScene == "Title Screen"){
+      scene = {
+        name:"Title Screen",
+        input:null
+      }
+      var path = new PIXI.Graphics();
+      for(var i = 0; i < 4; i++){
+        path.beginFill(blokusColors[i]);
+        path.drawRect(w * (i % 2) / 2, h * Math.floor(i / 2) / 2, w / 2, h / 2);
+      }
+      container.addChild(path);
+      /*var inputBox = drawOblong(w * 0.3, h * 0.45, w * 0.4, h * 0.1, h * 0.05, 0xffffff, 0x000000, h * 0.01);
+      var input = new PIXI.Text("", {fill:0x000000, fontFamily:"Courier New", fontSize:w * 0.038});
+      input.anchor.set(0.5, 0.5);
+      input.position.set(w / 2, h / 2);
+      container.addChild(input);
+      scene.input = input;*/
+    }
+  }
+
+}
+function mouseMove(event){
+  var mouse = {x:0, y:0};
+  var rect = canvas.getBoundingClientRect();
+  if(touchScreen){
+    mouse.x = event.touches[0].clientX - rect.left;
+    mouse.y = event.touches[0].clientY - rect.top;
+  }else{
+    mouse.x = event.clientX - rect.left;
+    mouse.y = event.clientY - rect.top;
+  }
+  mouse.x *= (w / parseInt(canvas.style.width, 10));
+  mouse.y *= (h / parseInt(canvas.style.height, 10));
+}
+
+function keyDown(event){
+  if(scene.name == "Title Screen"){
+    if(scene.input.text.length <= 15 && event.key.length == 1){
+      scene.input.text += event.key;
+    }else if(event.key == "Backspace"){
+      scene.input.text = scene.input.text.slice(0, -1);
+    }else if(event.key == "Enter"){
+
+    }
+  }
+
+}
+function mouseDown(event){
+  mouse = true;
+  mouseMove(event);
+  document.getElementById("keyboard").focus();
+}
+
+function mouseUp(event){
+  mouse = false;
+}
+
+function error(text){
+  console.error(text);
+}
+
+function log(text){
+  console.log(text);
+}
+
+function run(){
+  document.getElementById("p").appendChild(app.view);
+  canvas = document.getElementsByTagName('canvas')[0];
+  if(touchScreen){
+    canvas.style.transform.rotate("90deg");
+  }
+  document.body.addEventListener("touchstart", mouseDown);
+  document.body.addEventListener("mousedown", mouseDown);
+  document.body.addEventListener("mouseup", mouseUp);
+  document.body.addEventListener("touchend", mouseUp);
+  document.body.addEventListener("mousemove", mouseMove);
+  document.body.addEventListener("touchmove", mouseMove);
+  addEventListener("keydown", keyDown);
+  setInterval(frame, 1000 / 60);
+  app.stage.addChild(container);
+  changeScene("Title Screen");
+}
+
+function drawOblong(x, y, width, height, radius, fillColor, borderColor, borderThickness){
+  var path = new PIXI.Graphics();
+  path.beginFill(fillColor);
+  path.lineStyle(borderThickness, borderColor);
+  path.drawRoundedRect(x, y, width, height, radius);
+  container.addChild(path);
+  return path;
+}
+
+class Trigger{
+  constructor(name, bounds){
+    this.bounds = bounds;
+    this.name = name;
+  }
+}
+
+</script>
+</body>
+</html>
