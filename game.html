@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" name="viewport" content="width=device-width, user-scalable=no">
+  <title>Blokus</title>
+</head>
+<body>
+  <p align="center" id="p"><canvas id="canvas" width=1280 height=720></canvas></p>
+  <style>
+    img {visibility:hidden;}
+    body, html {overflow:hidden;width:100%;height:100%;margin:0px; padding:0px;background-color:#000000;}
+    canvas, p {margin:0px;padding:0px;}
+  </style>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/functions.js"></script>
+  <script>
+const touchScreen = (('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || (navigator.msMaxTouchPoints > 0));
+const aspectRatio = 16 / 9;
+const w = 1280;
+const h = 720;
+var canvas = $("canvas");
+var ctx = canvas.getContext("2d");
+var frames = 0;
+var socket = io();
+var triggers = [];
+var scene = {name:""};
+var blokusColors = [yellow, green, red, blue];
+var mouse = {x:0, y:0, down:false, click:false};
+var lobbies = [];
+var lobby = null;
+var playerData = null;
+var id = "";
+run();
+
+function frame(){
+  frames++;
+  triggers = [];
+  if(aspectRatio < (window.innerHeight / window.innerWidth)){
+    if(touchScreen && window.innerHeight > window.innerWidth){
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerWidth * (9 / 16) + "px";
+    }else{
+      canvas.style.width = window.innerWidth + "px";
+      canvas.style.height = window.innerWidth * (16 / 9) + "px";
+    }
+  }else{
+    if(touchScreen && window.innerHeight > window.innerWidth){
+      canvas.style.width = window.innerHeight * (9 / 16) + "px";
+      canvas.style.height = window.innerHeight + "px";
+    }else{
+      canvas.style.width = window.innerHeight * (16 / 9) + "px";
+      canvas.style.height = window.innerHeight + "px";
+    }
+  }
+  drawOblong(0, 0, w / 2, h / 2, 0, yellow, null, 0);
+  drawOblong(w / 2, 0, w / 2, h / 2, 0, green, null, 0);
+  drawOblong(0, h / 2, w / 2, h / 2, 0, red, null, 0);
+  drawOblong(w / 2, h / 2, w / 2, h / 2, 0, blue, null, 0);
+  switch(scene.name){
+    case "Title Screen":
+      makeButton([(w / 4) - 200, (h / 2) - 80, 400, 160, 10, lightGray], "Create Lobby");
+      makeButton([(w * 3 / 4) - 200, (h / 2) - 80, 400, 160, 10, lightGray], "Join Lobby");
+      writeText("Join Lobby", w * 3 / 4, h / 2, 40, "center");
+      writeText("Create Lobby", w / 4, h / 2, 40, "center");
+      break;
+    case "Join Lobby":
+      drawOblong(w / 4, h / -16, w / 2, h / 4, 50, lightGray);
+      writeText("Lobbies", w / 2, h / 12, 100, "center");
+      for(var i = 0; i < lobbies.length; i++){
+        makeButton([w / 4, 160 + (i * 100), w / 2, 80, 10, lightGray], "Join", lobbies[i].name);
+        writeText(lobbies[i].name, (w / 4) + 10, 190 + (i * 100), 60, "left");
+        writeText(lobbies[i].playerData.length + "/4", (w * 3 / 4) - 10, 200 + (i * 100), 60, "right");
+      }
+      break;
+    case "Pick Color":
+      var playerColors = lobby.playerData.map(a => a.color);
+      var colors = blokusColors.map(a => playerColors.indexOf(a) != -1 ? gray : a);
+      makeButton([0, 0, w / 2, h / 2, 0, colors[0], null, 0], "Pick", colors[0]);
+      makeButton([w / 2, 0, w / 2, h / 2, 0, colors[1], null, 0], "Pick", colors[1]);
+      makeButton([0, h / 2, w / 2, h / 2, 0, colors[2], null, 0], "Pick", colors[2]);
+      makeButton([w / 2, h / 2, w / 2, h / 2, 0, colors[3], null, 0], "Pick", colors[3]);
+      drawOblong(w / 4, h / -16, w / 2, h / 4, 50, lightGray);
+      writeText("Pick Color", w / 2, h / 12, 100, "center");
+      break;
+    case "Lobby":
+      drawOblong(0, 0, w, h, 0, playerData.color, null, 0);
+      drawOblong(w / 4, h / -16, w / 2, h / 4, 50, lightGray);
+      writeText(lobby.name, w / 2, h / 14, 100, "center");
+      if(lobby.playerData[0].id == id && lobby.players.length == 4){
+        makeButton([(w / 2) - 200, (h / 2) - 80, 400, 160, 10, lightGray], "Start Game");
+        writeText("Start Game", w / 2, h / 2, 40, "center");
+      }
+      break;
+    case "Game":
+      var currentPlayerData = lobby.playerData[lobby.game.turn];
+      var change = scene.end ? 0 : Math.round(Math.sin(frames / 10) * 32);
+      for(var i = 0; i < 4; i++){
+        if(lobby.game.turn == i){
+          drawOblong((w / 2) * (i % 2), (h / 2) * Math.floor(i / 2), w / 2, h / 2, 0, changeColor(lobby.playerData[i].color, change, change, change), null, 0);
+        }else{
+          drawOblong((w / 2) * (i % 2), (h / 2) * Math.floor(i / 2), w / 2, h / 2, 0, lobby.playerData[i].color, null, 0);
+        }
+      }
+      var board = lobby.game.board;
+      var pieces = playerData.pieces;
+      var length = 640 / board.length;
+      var pieceLength = 25;
+      var left = (w / 2) - 320;
+      var center = left / 2;
+      var top = 0;
+      if(playerData.color == lobby.playerData[lobby.game.turn].color){
+        pieces = scene.pieces;
+      }
+      makeButton([left, top, 640, 640, 0], "Place Piece");
+      for(var i = 0; i < board.length; i++){
+        for(var j = 0; j < board[i].length; j++){
+          drawOblong(left + (i * length), top + (j * length), length, length, 0, board[i][j], black, 1);
+        }
+      }
+      for(var i = 0; i < pieces.length; i++){
+        var pieceCenter = getPieceCenter(pieces[i]);
+        var pieceX = center - (pieceCenter.x * pieceLength);
+        var pieceY = pieceCenter.y * pieceLength;
+        var pieceSide = Math.floor(i * 2 / pieces.length);
+        var pieceMargin = 640 / (pieceSide ? Math.floor(pieces.length / 2) : pieces.length - Math.floor(pieces.length / 2));
+        var pieceOrientation = ((i % 2) * 2) - 1;
+        for(var x = 0; x < pieces[i].length; x++){
+          for(var y = 0; y < pieces[i][x].length; y++){
+            if(parseInt(pieces[i][x][y])){
+              var X = pieceX + (x * pieceLength) + (pieceMargin * pieceOrientation) + (pieceSide * (w - left));
+              var Y = 60 + (pieceMargin * (i % Math.ceil(pieces.length / 2))) + (y * pieceLength) - pieceY;
+              if(scene.selectedPiece != i){
+                makeButton([X, Y, pieceLength, pieceLength, 0, playerData.color, black, 1], "Select Piece", i);
+              }else{
+                makeButton([X, Y, pieceLength, pieceLength, 0, changeColor(playerData.color, 64, 64, 64), black, 2], "Select Piece", i);
+              }
+            }
+          }
+        }
+      }
+      //Piece Shadow
+      if(scene.selectedPiece != -1 || currentPlayerData.selectedPiece != -1){
+        var length = 640 / board.length;
+        var piece = currentPlayerData.pieces[currentPlayerData.selectedPiece];
+        var relativeX = currentPlayerData.pieceCoordinates.x;
+        var relativeY = currentPlayerData.pieceCoordinates.y;
+        if(playerData.color == lobby.playerData[lobby.game.turn].color){
+          relativeX = (mouse.x - left) * board.length / 640;
+          relativeY = (mouse.y - top) * board.length / 640;
+          piece = scene.pieces[scene.selectedPiece];
+        }
+        var center = getPieceCenter(piece);
+        relativeX < center.x ? relativeX = center.x : null;
+        relativeX > board.length + center.x - piece.length ? relativeX = board.length + center.x - piece.length : null;
+        relativeY < center.y ? relativeY = center.y : null;
+        relativeY > board.length + center.y - piece[0].length ? relativeY = board.length + center.y - piece[0].length : null;
+        for(var x = 0; x < piece.length; x++){
+          for(var y = 0; y < piece[0].length; y++){
+            var X = left + Math.round(relativeX + x - center.x) * length;
+            var Y = top + Math.round(relativeY + y - center.y) * length;
+            if(parseInt(piece[x][y])){
+              drawOblong(X, Y, length, length, 0, mixColors(currentPlayerData.color, white), black, 1);
+            }
+          }
+        }
+      }
+      var size = h - 640;
+      var scores = lobby.playerData.map(d => d.score);
+      var date = (new Date()).getTime();
+      var time = scene.end ? lobby.game.timerLength : Math.ceil((lobby.game.timer - date) / 1000);
+      var icons = ["↻", "⇅", ...scores, time, "❌"];
+      var events = ["Rotate Piece", "Flip Piece", ...new Array(4).fill(""), "Add Time", "Leave Game"];
+      var colors = [lightGray, lightGray, ...lobby.playerData.map(p => p.color), lightGray, lightGray];
+      var textColors = [gray, gray, ...new Array(4).fill(lightGray), gray, red];
+      var borderColors = [darkGray, darkGray, ...new Array(4).fill(darkGray), darkGray, darkGray];
+      var borderThickness = [2, 2, 1, 1, 1, 1, 2, 2];
+      var verticalShift = [2, -3, 0, 0, 0, 0, 0, -7];
+      var change = scene.end ? 0 : Math.round(Math.cos(frames / 10) * 32);
+      colors[lobby.game.turn + 2] = changeColor(colors[lobby.game.turn + 2], change, change, change);
+      for(var i = 0; i < icons.length; i++){
+        makeButton([left + (i * size), h - size, size, size, 0, colors[i], black, 1], events[i]);
+        writeText(icons[i], left + ((i + 0.5) * size), h - (size / 2) + verticalShift[i], i == 7 ? 40 : 60, "center", textColors[i], borderColors[i], 1);
+      }
+      if(scene.end){
+        var winner = find(lobby.playerData, "score", Math.max(...lobby.playerData.map(p => p.score)));
+        ctx.globalAlpha = 0.5;
+        drawOblong(0, 0, w, h, 0, lightGray);
+        if(winner.id == id){
+          ctx.globalAlpha = 1.0;
+          writeText("You Win!", w / 2, h / 4, 150, "center", green, darkGray, 3);
+        }else{
+          ctx.globalAlpha = 1.0;
+          writeText("You Lose!", w / 2, h / 4, 150, "center", red, darkGray, 3);
+        }
+      }
+      break;
+  }
+}
+
+function changeScene(newScene){
+  switch(newScene){
+    case "Title Screen":
+    case "Join Lobby":
+    case "Lobby":
+    case "Pick Color":
+      scene = {
+        name:newScene,
+      }
+      break;
+    case "Game":
+      scene = {
+        name:newScene,
+        turn:lobby.game.turn,
+        pieces:[...playerData.pieces],
+        selectedPiece:-1,
+        end:false,
+      }
+      break;
+  }
+}
+
+function mouseMove(event){
+  var rect = canvas.getBoundingClientRect();
+  if(touchScreen){
+    mouse.x = event.touches[0].clientX - rect.left;
+    mouse.y = event.touches[0].clientY - rect.top;
+  }else{
+    mouse.x = event.clientX - rect.left;
+    mouse.y = event.clientY - rect.top;
+  }
+  mouse.x *= (w / parseInt(canvas.style.width, 10));
+  mouse.y *= (h / parseInt(canvas.style.height, 10));
+  switch(scene.name){
+    case "Game":
+      var left = (w / 2) - 320;
+      var top = 0;
+      var board = lobby.game.board;
+      var relativeX = (mouse.x - left) * board.length / 640;
+      var relativeY = (mouse.y - top) * board.length / 640;
+      playerData.pieceCoordinates = {x:relativeX, y:relativeY};
+      emit("set-piece-coordinates", {x:relativeX, y:relativeY});
+      break;
+  }
+  if(mouse.click && scene.end != true){
+    for(var i = 0; i < triggers.length; i++){
+      if(isWithin(mouse.x, mouse.y, triggers[i].bounds)){
+        switch(triggers[i].event){
+          case "Create Lobby":
+            emit("create-lobby");
+            break;
+          case "Join Lobby":
+            changeScene("Join Lobby");
+            break;
+          case "Join":
+            emit("join", triggers[i].data);
+            break;
+          case "Pick":
+            if(blokusColors.indexOf(triggers[i].data) != -1){
+              emit("set-color", triggers[i].data);
+              changeScene("Lobby");
+            }
+            break;
+          case "Start Game":
+            emit("start", lobby.name);
+            break;
+          case "Select Piece":
+            if(lobby.game.turn == lobby.playerData.map(p => p.color).indexOf(playerData.color)){
+              scene.selectedPiece = triggers[i].data;
+              emit("select-piece", triggers[i].data);
+            }
+            break;
+          case "Rotate Piece":
+            if(lobby.game.turn == lobby.playerData.map(p => p.color).indexOf(playerData.color)){
+              scene.pieces[scene.selectedPiece] = rotate(scene.pieces[scene.selectedPiece]);
+              emit("rotate-piece");
+            }
+            break;
+          case "Flip Piece":
+            if(lobby.game.turn == lobby.playerData.map(p => p.color).indexOf(playerData.color)){
+              scene.pieces[scene.selectedPiece] = flip(scene.pieces[scene.selectedPiece]);
+              emit("flip-piece");
+            }
+            break;
+          case "Place Piece":
+            if(playerData.selectedPiece != -1){
+              emit("place-piece", playerData.pieceCoordinates);
+            }
+          break;
+            case "Leave Game":
+
+          break;
+        }
+      }
+    }
+    mouse.click = false;
+  }
+}
+
+function mouseDown(event){
+  mouse.down = true;
+  mouse.click = true;
+  mouseMove(event);
+}
+
+function mouseUp(event){
+  mouse.down = false;
+  mouse.click = false;
+}
+
+function getPieceCenter(piece){
+  var center = {x:0, y:0};
+  var count = 0;
+  for(var x = 0; x < piece.length; x++){
+    for(var y = 0; y < piece[x].length; y++){
+      if(parseInt(piece[x][y])){
+        center.x += (x + 0.5);
+        center.y += (y + 0.5);
+        count++;
+      }
+    }
+  }
+  if(piece.length != piece[0].length){
+    center.x = Math.ceil((center.x + 0.5) / count) - 0.5;
+    center.y = Math.ceil((center.y + 0.5) / count) - 0.5;
+  }else{
+    center.x = piece.length / 2;
+    center.y = piece[0].length / 2;
+  }
+  return center;
+}
+
+function rotate(piece){
+  return piece[0].map((v, i) => piece.map(row => row[row.length - 1 - i]));
+}
+
+function flip(piece){
+  return piece.map(i => i.reverse());
+}
+
+function error(text){
+  console.error(text);
+}
+
+function find(array, key, value){
+  return array[array.findIndex(a => a[key] == value)];
+}
+
+function findIndex(array, key, value){
+  return array.findIndex(a => a[key] == value)
+}
+
+function log(text){
+  console.log(text);
+}
+
+function run(){
+  setInterval(frame, 1000 / 30);
+  if(touchScreen){
+    var button = document.createElement("button");
+    button.innerHTML = "Play Game";
+    button.style.fontSize = "100px";
+    button.addEventListener("click", () => {document.body.requestFullscreen();screen.orientation.lock("landscape")});
+    document.body.appendChild(button);
+    document.body.addEventListener("touchstart", mouseDown);
+    document.body.addEventListener("touchend", mouseUp);
+    document.body.addEventListener("touchmove", mouseMove);
+  }else{
+    //document.body.addEventListener("click", mouseClick);
+    document.body.addEventListener("mousedown", mouseDown);
+    document.body.addEventListener("mouseup", mouseUp);
+    document.body.addEventListener("mousemove", mouseMove);
+  }
+  changeScene("Title Screen");
+}
+
+socket.on("lobby", (newLobby) => {
+  lobby = newLobby;
+  if(lobby != null){
+    for(var i = 0; i < lobby.playerData.length; i++){
+      if(lobby.playerData[i].id == id){
+        playerData = lobby.playerData[i];
+      }
+    }
+  }
+  if(lobby.state == "Lobby" && (scene.name == "Join Lobby" || scene.name == "Title Screen")){
+    if(playerData.color == gray){
+      changeScene("Pick Color");
+    }else{
+      changeScene("Lobby");
+    }
+  }
+  if(lobby.state == "Game"){
+    if(scene.name != "Game"){
+      changeScene("Game");
+    }
+    if(lobby.playerData[lobby.game.turn].id != playerData.id){
+      scene.selectedPiece = playerData.selectedPiece;
+      scene.pieces = playerData.pieces;
+    }
+  }
+  if(lobby.state == "End"){
+    changeScene("Game");
+    scene.end = true;
+  }
+});
+
+socket.on("lobbies", (newLobbies) => {
+  lobbies = newLobbies;
+
+  for(var i = 0; i < lobbies.length; i++){
+    if(findIndex(lobbies[i].playerData, "id", id) != -1){
+      lobby = lobbies[i];
+    }
+  }
+});
+
+socket.on("id", (newId) => {
+  id = newId;
+});
+
+</script>
+</body>
+</html>
